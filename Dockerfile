@@ -4,8 +4,14 @@ WORKDIR /app
 
 COPY . .
 
-# Add this to install cmake
-RUN apt-get update && apt-get install -y cmake
+# Install dependencies for building pyarrow
+RUN apt-get update && \
+    apt-get install -y cmake \
+    libarrow-dev \
+    libparquet-dev \
+    build-essential \
+    && apt-get clean
+
 
 RUN pip install -r requirements.txt
 
