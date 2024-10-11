@@ -1,4 +1,4 @@
-FROM python:latest
+FROM python:3.10
 
 WORKDIR /app
 
@@ -13,10 +13,10 @@ RUN apt-get update && \
 # Install pyarrow from pip, which includes pre-built binaries
 RUN pip install pyarrow
 
+# Install remaining dependencies
 RUN pip install -r requirements.txt
 
 EXPOSE 8502
 
 ENTRYPOINT [ "streamlit", "run", "--server.port", "8502" ]
-
 CMD ["Home.py"]
