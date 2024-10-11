@@ -19,4 +19,4 @@ RUN pip install -r requirements.txt
 EXPOSE 8503
 
 ENTRYPOINT [ "streamlit", "run", "--server.port", "8503" ]
-CMD ["Main.py"]
+CMD ["Data Source.py"]
