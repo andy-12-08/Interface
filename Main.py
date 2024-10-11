@@ -69,6 +69,24 @@ with tab4:
         if st.checkbox("Reset O (Dead time)"):
             st.session_state.o_value = 0.0  # Reset to zero
 
+        # CSS to change the button background to blue
+        button_style = """
+            <style>
+            div.stButton > button {
+                background-color: blue;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-size: 16px;
+            }
+            </style>
+            """
+        # Inject the custom CSS into the Streamlit app
+        st.markdown(button_style, unsafe_allow_html=True)
+        if st.button("Save as optimal"):
+            st.success("Configuration saved successfully!")
+
 with tab5:
     st.write("Codes for D-S")
 with tab6:
