@@ -4,14 +4,14 @@ WORKDIR /app
 
 COPY . .
 
-# Install dependencies for building pyarrow
+# Install cmake and build-essential
 RUN apt-get update && \
     apt-get install -y cmake \
-    libarrow-dev \
-    libparquet-dev \
     build-essential \
     && apt-get clean
 
+# Install pyarrow from pip, which includes pre-built binaries
+RUN pip install pyarrow
 
 RUN pip install -r requirements.txt
 
