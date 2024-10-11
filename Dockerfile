@@ -4,6 +4,9 @@ WORKDIR /app
 
 COPY . .
 
+# Add this to install cmake
+RUN apt-get update && apt-get install -y cmake
+
 RUN pip install -r requirements.txt
 
 EXPOSE 8502
