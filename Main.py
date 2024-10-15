@@ -194,6 +194,14 @@ def I_O_Plot(df, column_name, I_O):
     # Display the plot in Streamlit
     st.plotly_chart(fig, use_container_width=True)
 
+def rescale_input():
+    if st.session_state.scale_input:
+        st.session_state.input_variable = 100*((st.session_state.input_variable - st.session_state.input_min)/(st.session_state.input_max - st.session_state.input_min))
+
+def rescale_output():
+    if st.session_state.scale_output:
+        st.session_state.output_variable = 100*((st.session_state.output_variable - st.session_state.output_min)/(st.session_state.output_max - st.session_state.output_min))
+    
 
 st.markdown(html_title, unsafe_allow_html=True)
 
@@ -290,12 +298,12 @@ with tab1:
                 # Update the session state with the selected columns              
                 if st.session_state.input_column is not None:
                     st.session_state.input_variable = df[input_column]
-                    st.session_state.min_input = st.session_state.input_variable.min()
-                    st.session_state.max_input = st.session_state.input_variable.max()
+                    st.session_state.min_input = st.session_state.input_variable.min() # default input min value
+                    st.session_state.max_input = st.session_state.input_variable.max() # default input max value
                 if st.session_state.output_column is not None:
                     st.session_state.output_variable = df[output_column]
-                    st.session_state.min_output = st.session_state.output_variable.min()
-                    st.session_state.max_output = st.session_state.output_variable.max()
+                    st.session_state.min_output = st.session_state.output_variable.min() # default output min value
+                    st.session_state.max_output = st.session_state.output_variable.max() # default output max value
             else:
                 st.selectbox("Time column", [], key='time_column')
                 st.selectbox("Input column", [], key='input_column')
@@ -306,21 +314,16 @@ with tab1:
                     st.markdown("##### Scaling settings #####")
                 if st.session_state['input_column'] is not None:
                     if st.session_state.scale_input: # Check if the checkbox is checked (with the key 'scale_input', the widget state is stored in the session state)
-                        # Scale the input variable to be between 0 and 1
-                        st.session_state.input_variable = (st.session_state.input_variable - st.session_state.min_input) / (st.session_state.max_input - st.session_state.min_input)
-                        st.session_state.min_input = st.session_state.input_variable.min()
-                        st.session_state.max_input = st.session_state.input_variable.max()
+                        rescale_input() # Scale the input variable with the user input values for min and max input values 
                     else:
                         st.session_state.input_variable = df[input_column]
-                    st.number_input("Input Min", value=st.session_state['min_input'], key='input_min')
+                    st.number_input("Input Min", value=st.session_state['min_input'], key='input_min', on_change=rescale_input)
                 if st.session_state['output_column'] is not None:
                     if st.session_state.scale_output:
-                        st.session_state.output_variable = (st.session_state.output_variable - st.session_state.output_min) / (st.session_state.output_max - st.session_state.output_min)
-                        st.session_state.min_output = st.session_state.output_variable.min()
-                        st.session_state.max_output = st.session_state.output_variable.max()
+                        rescale_output() # Scale the output variable with the user input values for min and max output values
                     else:
                         st.session_state.output_variable = df[output_column]
-                    st.number_input("Output Min", value=st.session_state['min_output'], key='output_min')      
+                    st.number_input("Output Min", value=st.session_state['min_output'], key='output_min', on_change=rescale_output)  # the input variable is also scaled when the min value is changed  
         with col2:
             if st.session_state.uploaded_file is not None:
                 if st.session_state.time_column is not None:
@@ -346,12 +349,13 @@ with tab1:
                     add_large_vertical_space()
                     add_large_vertical_space()
                 if st.session_state.input_column is not None:
-                    st.number_input("Input Max", value=st.session_state['max_input'], key='input_max')
+                    st.number_input("Input Max", value=st.session_state['max_input'], key='input_max', on_change=rescale_input)
                 if st.session_state.output_column is not None:
-                    st.number_input("Output Max", value=st.session_state['max_output'], key='output_max')               
+                    st.number_input("Output Max", value=st.session_state['max_output'], key='output_max', on_change=rescale_output)  
             else:
                 # Uncheck the checkboxes when the file is not available (# using session state forces it to be unchecked)
                 st.session_state.timestamp = False
+                st.session_state.data_sec_min = False
                 st.session_state.scale_input = False
                 st.session_state.scale_output = False
                 # Disable the checkboxes when the file is not available
