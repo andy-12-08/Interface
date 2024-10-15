@@ -81,8 +81,6 @@ def convert_timestamp_to_minutes(time_col_values):
             converted_time.append(total_minutes)
             # convert to series
             converted_time_series = pd.Series(converted_time)
-            # convert to dataframe with the same column name
-            # converted_time_series_df = pd.DataFrame({time_col_values.name: converted_time_series})
         return converted_time_series
     else:
         return time_col_values
