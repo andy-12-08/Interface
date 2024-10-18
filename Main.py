@@ -443,7 +443,7 @@ with tab3:
                 # scale input from 0 to 1 
                 from sklearn.preprocessing import MinMaxScaler
                 scaler = MinMaxScaler()
-                u = scaler.fit_transform(u.reshape(-1,1)).flatten()
+                # u = scaler.fit_transform(u.reshape(-1,1)).flatten()
 
                 # Initialize u0, yp0, and ns
                 u0 = u[0]
@@ -512,11 +512,11 @@ with tab3:
                 x0[2] = 1 # thetam
 
                 # optimize Km, taum, thetam
-                # solution = minimize(objective,x0)
+                solution = minimize(objective,x0)
 
                 # Another way to solve: with bounds on variables
                 bnds = ((0, None), (0, None), (0.0, None))
-                solution = minimize(objective,x0,bounds=bnds,method='L-BFGS-B')
+                # solution = minimize(objective,x0,bounds=bnds,method='L-BFGS-B')
                 x = solution.x
 
                 # Display the optimized parameters
@@ -672,7 +672,7 @@ with tab4:
             # scale input from 0 to 1 
             from sklearn.preprocessing import MinMaxScaler
             scaler = MinMaxScaler()
-            u = scaler.fit_transform(u.reshape(-1,1)).flatten()
+            # u = scaler.fit_transform(u.reshape(-1,1)).flatten()
 
             # Initialize u0, yp0, and ns
             u0 = u[0]
