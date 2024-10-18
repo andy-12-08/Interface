@@ -4,6 +4,12 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from scipy.integrate import solve_ivp
+from scipy.optimize import minimize
+from scipy.integrate import odeint
+from scipy.optimize import curve_fit
+from scipy.interpolate import interp1d
+from gekko import GEKKO
 
 st.set_page_config(layout="wide",
                page_title="GeauxTune",
@@ -81,6 +87,8 @@ def convert_timestamp_to_minutes(time_col_values):
             converted_time.append(total_minutes)
             # convert to series
             converted_time_series = pd.Series(converted_time)
+            # Make the series relative to the first time value
+            converted_time_series = converted_time_series - converted_time_series.iloc[0]
         return converted_time_series
     else:
         return time_col_values
@@ -124,6 +132,7 @@ def I_O_Plot(df, column_name, I_O):
         fig.update_layout(
             xaxis_title='Time',
             yaxis_title=f'{I_O} Variable ({column_name})',
+            margin=dict(t=0, b=0, l=0, r=0),  # Adjust margins to control space around the plot
             xaxis=dict(
                 type='date',
                 tickformat="%H:%M:%S",  # Format the ticks to show time as HH:MM:SS
@@ -160,6 +169,7 @@ def I_O_Plot(df, column_name, I_O):
         fig.update_layout(
             xaxis_title='Time',
             yaxis_title=f'{I_O} Variable ({column_name})',
+            margin=dict(t=0, b=0, l=0, r=0),  # Adjust margins to control space around the plot
             xaxis=dict(
                 title=dict(
                     text='Time',
@@ -203,6 +213,8 @@ def rescale_output():
 
 st.markdown(html_title, unsafe_allow_html=True)
 
+if 'fit_model_status' not in st.session_state:
+    st.session_state.fit_model_status = "Model fitting in progress!"
 # Initialize session state for file upload status if not already set
 if 'uploaded_file' not in st.session_state:
     st.session_state.uploaded_file = None
@@ -235,18 +247,32 @@ if 'scale_input' not in st.session_state:
 if 'scale_output' not in st.session_state:
     st.session_state.scale_output = False
 
+if 'K' not in st.session_state:
+    st.session_state.K = None
+if 'tau' not in st.session_state:
+    st.session_state.tau = None
+if 'theta' not in st.session_state:
+    st.session_state.theta = None
+
+# Initialize session state for sliders if not already set
+if 'k_value' not in st.session_state:
+    st.session_state.k_value = 1  # Default value for K Gain
+if 't_value' not in st.session_state:
+    st.session_state.t_value = 10  # Default value for Time constant
+if 'o_value' not in st.session_state:
+    st.session_state.o_value = 1  # Default value for Dead time
+
+if 'k_slider_reset' not in st.session_state:
+    st.session_state.k_slider_reset = None
+if 't_slider_reset' not in st.session_state:
+    st.session_state.t_slider_reset = None
+if 'o_slider_reset' not in st.session_state:
+    st.session_state.o_slider_reset = None
+
 
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = \
     st.tabs(["Data Source","Input/Output","Model fitting","Manual fit","D-S","Z-N","C-C","Compare","Export results"])
-
-# Initialize session state for sliders if not already set
-if 'k_value' not in st.session_state:
-    st.session_state.k_value = -0.2  # Default value for K Gain
-if 't_value' not in st.session_state:
-    st.session_state.t_value = 41.8  # Default value for Time constant
-if 'o_value' not in st.session_state:
-    st.session_state.o_value = 27.5  # Default value for Dead time
 
 with tab1:
     # Create two columns and insert a vertical divider
@@ -331,13 +357,13 @@ with tab1:
                 st.empty() # Add vertical space
                 add_medium_vertical_space()
                 if st.session_state.input_column is not None:
-                    st.checkbox("Scale input", value=False, key='scale_input')
+                    st.checkbox("Scale input (%)", value=False, key='scale_input')
                     st.empty() # Add vertical space
                     add_medium_vertical_space()
                     if st.session_state.output_column is None:
-                        st.checkbox("Scale output", value=False, key='scale_output', disabled=True)
+                        st.checkbox("Scale output (%)", value=False, key='scale_output', disabled=True)
                     else:
-                        st.checkbox("Scale output", value=False, key='scale_output')
+                        st.checkbox("Scale output (%)", value=False, key='scale_output')
                     if st.session_state.output_column is None:
                         add_large_vertical_space()
                         add_large_vertical_space()
@@ -360,10 +386,10 @@ with tab1:
                 st.checkbox("Timestamp", value=False, key='timestamp', disabled=True)
                 st.empty() # Add vertical space
                 add_medium_vertical_space()
-                st.checkbox("Scale input", value=False, key='scale_input', disabled=True)
+                st.checkbox("Scale input (%)", value=False, key='scale_input', disabled=True)
                 st.empty() # Add vertical space
                 add_medium_vertical_space()
-                st.checkbox("Scale output", value=False, key='scale_output', disabled=True)
+                st.checkbox("Scale output (%)", value=False, key='scale_output', disabled=True)
                 add_large_vertical_space()
                 add_large_vertical_space()
                 add_large_vertical_space()
@@ -377,8 +403,9 @@ with tab1:
                st.checkbox("Data in sec (or min)", value=False, key='data_sec_min', disabled=True)
         if st.session_state.uploaded_file is not None:
             if st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
-                if st.button("Fit model"):
-                    st.warning("Model fitting has not been implemented yet!")
+                if st.button("Fit model", key='fit_model'):
+                    # st.warning("Model fitting has not been implemented yet!")
+                    st.warning("Model is about to run!")
                           
 with tab2:
     if st.session_state.uploaded_file is not None:
@@ -402,64 +429,413 @@ with tab2:
             I_O_Plot(df, st.session_state.output_column, 'Output')
 
 with tab3:
-    st.write("Codes for Model fitting")
+    if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
+        if st.session_state.fit_model:
+            if not st.session_state.timestamp:
+
+                # st.success("Model fitting in progress!")
+                st.warning(st.session_state.fit_model_status)
+
+                # Assuming t, yp, and u are numpy arrays from session state
+                t = np.array(st.session_state.time_variable)
+                yp = np.array(st.session_state.output_variable)
+                u = np.array(st.session_state.input_variable)
+
+                # scale input from 0 to 1 
+                from sklearn.preprocessing import MinMaxScaler
+                scaler = MinMaxScaler()
+                u = scaler.fit_transform(u.reshape(-1,1)).flatten()
+
+                # Initialize u0, yp0, and ns
+                u0 = u[0]
+                yp0 = yp[0]
+
+                # specify number of steps
+                ns = len(t)
+                # delta_t = t[1]-t[0]
+                # create linear interpolation of the u data versus time
+                uf = interp1d(t,u)
+
+                # define first-order plus dead-time approximation    
+                def fopdt(y,t,uf,Km,taum,thetam):
+                    # arguments
+                    #  y      = output
+                    #  t      = time
+                    #  uf     = input linear function (for time shift)
+                    #  Km     = model gain
+                    #  taum   = model time constant
+                    #  thetam = model time constant
+                    # time-shift u
+                    try:
+                        if (t-thetam) <= 0:
+                            um = uf(0.0)
+                        else:
+                            um = uf(t-thetam)
+                    except:
+                        #print('Error with time extrapolation: ' + str(t))
+                        um = u0
+                    # calculate derivative
+                    dydt = (-(y-yp0) + Km * (um-u0))/taum
+                    return dydt
+
+                # simulate FOPDT model with x=[Km,taum,thetam]
+                def sim_model(x):
+                    # input arguments
+                    Km = x[0]
+                    taum = x[1]
+                    thetam = x[2]
+                    # storage for model values
+                    ym = np.zeros(ns)  # model
+                    # initial condition
+                    ym[0] = yp0
+                    # loop through time steps    
+                    for i in range(0,ns-1):
+                        ts = [t[i],t[i+1]]
+                        y1 = odeint(fopdt,ym[i],ts,args=(uf,Km,taum,thetam))
+                        ym[i+1] = y1[-1]
+                    return ym
+
+                # define objective
+                def objective(x):
+                    # simulate model
+                    ym = sim_model(x)
+                    # calculate objective
+                    obj = 0.0
+                    for i in range(len(ym)):
+                        obj = obj + (ym[i]-yp[i])**2    
+                    # return result
+                    return obj
+
+                # initial guesses
+                x0 = np.zeros(3)
+                x0[0] = 1 # Km
+                x0[1] = 10 # taum
+                x0[2] = 1 # thetam
+
+                # optimize Km, taum, thetam
+                # solution = minimize(objective,x0)
+
+                # Another way to solve: with bounds on variables
+                bnds = ((0, None), (0, None), (0.0, None))
+                solution = minimize(objective,x0,bounds=bnds,method='L-BFGS-B')
+                x = solution.x
+
+                # Display the optimized parameters
+                K = x[0]
+                tau = x[1] 
+                theta = x[2]
+                # Store the optimized parameters in the session state
+                st.session_state.K = x[0] 
+                st.session_state.tau = x[1]
+                st.session_state.theta = x[2]
+
+                # store a copy of the optimized parameters for resetting the sliders
+                st.session_state.k_slider_reset = x[0]
+                st.session_state.t_slider_reset = x[1]
+                st.session_state.o_slider_reset = x[2]
+
+                # Simulate the model using optimized parameters
+                ym = sim_model(x)
+
+                # calculate the R2 value and RMSE value
+                r2 = 1 - np.sum((yp - ym) ** 2) / np.sum((yp - np.mean(yp)) ** 2)
+                rmse = np.sqrt(np.mean((yp - ym) ** 2))
+
+                # After fitting is done, update the status
+                st.session_state.fit_model_status = "Model fitting completed!"
+
+                # Change the status to success
+                st.success(st.session_state.fit_model_status)
+
+                # Retrun the status to the initial state
+                st.session_state.fit_model_status = "Model fitting in progress!"
+
+
+                col1, col2, col3 = st.columns([3, 0.05, 1])
+                with col1:
+                    fig = go.Figure()
+                    # Add traces
+                    fig.add_trace(go.Scatter(x=t, y=ym, mode='lines+markers', name='Model Prediction', 
+                                            line=dict(width=3, color='black', dash='dash'), 
+                                            marker=dict(size=1)))
+                    fig.add_trace(go.Scatter(x=t, y=yp, mode='lines', name='Actual Output', 
+                                            line=dict(width=3, color='blue')))
+
+                    # Add annotation for R2 and RMSE
+                    fig.add_annotation(
+                    text=f"R² = {r2:.4f}<br>RMSE = {rmse:.4f}",
+                    xref="paper", yref="paper", x=0.05, y=0.95, showarrow=False,
+                    font=dict(size=14, family="Arial", color="black"),
+                    bordercolor="black", borderwidth=1, borderpad=4, bgcolor="lightgray", opacity=0.8
+                    )
+                    # Update layout
+                    fig.update_layout(
+                        xaxis_title='Time', 
+                        yaxis_title='Output', 
+                        plot_bgcolor='lightgray', 
+                        font=dict(size=16, family='Arial Black', color='black'), 
+                        height=400,  # Increase the height of the plot
+                        margin=dict(t=0, b=0, l=0, r=0),  # Adjust margins to control space around the plot
+                        xaxis=dict(
+                            tickfont=dict(size=14, family='Arial', color='black'),
+                            title_font=dict(size=16, family='Arial Black', color='black')
+                        ),
+                        yaxis=dict(
+                            tickfont=dict(size=14, family='Arial', color='black'),
+                            title_font=dict(size=16, family='Arial Black', color='black')
+                        ),
+                        legend=dict(
+                            x=0.75,  # Position the legend closer to the right edge (0 to 1 scale)
+                            y=0.1,   # Position the legend near the bottom of the plot (0 to 1 scale)
+                            bgcolor='rgba(255,255,255,0.5)',  # Transparent background for the legend
+                            bordercolor='black',
+                            borderwidth=1
+                        )
+                    )
+                    # Render plotly chart in Streamlit
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with col2:
+                    st.markdown("""
+                    <style>
+                        .vertical-line {
+                            border-left: 2px solid rgba(49, 51, 63, 0.2); /* Light gray vertical line */
+                            height: 100vh; /* Full height of the viewport */
+                            margin: 0 auto; /* Center the line vertically */
+                        }
+                    </style>
+                    <div class="vertical-line"></div>
+                    """, unsafe_allow_html=True) 
+
+                with col3:
+
+                    # Add some padding at the top to align with the plot
+                    st.markdown("<div style='padding-top:30px;'></div>", unsafe_allow_html=True)
+
+                    # Create HTML for the parameters and transfer function
+                    K_html = f"<span style='color:blue; font-size:20px; font-weight:bold;'>K = </span> <span style='font-size:20px;'>{K:.4f}</span>"
+                    tau_html = f"<span style='color:red; font-size:20px; font-weight:bold;'>τ = </span> <span style='font-size:20px;'>{tau:.4f}</span>"
+                    theta_html = f"<span style='color:green; font-size:20px; font-weight:bold;'>θ = </span> <span style='font-size:20px;'>{theta:.4f}</span>"
+
+                    # Transfer function
+                    transfer_function_html = f"""
+                    <div style='margin-top:10px; font-size:20px; font-weight:bold;'>
+                        <span>Transfer Function:</span><br>
+                        G(s) = <span style='color:blue;'>K</span> e<sup>-<span style='color:green;'>θ</span>s</sup> / (<span style='color:red;'>τ</span> s + 1)
+                    </div>
+                    """
+
+                    # Combine with a header for "Fitted Parameters:"
+                    st.markdown(f"""
+                    <div style='background-color:lightgray; padding:15px; border-radius:10px; max-width:400px; margin:auto;'>
+                        <h4 style='font-weight:bold; color:black;'>Fitted Parameters:</h4>
+                        <div>{K_html}</div>
+                        <div>{tau_html}</div>
+                        <div>{theta_html}</div>
+                        {transfer_function_html}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+
+            else:
+                st.warning("You need to convert the timestamp to minutes before fitting the model!")
+                
+
 with tab4:
-    # Create two columns with a 3:1 ratio and insert a vertical divider
-    col1, col2, col3 = st.columns([3, 0.05, 1])  # The middle column for the vertical line is given a small width
-    # Column 1: Add content (like a plot)
-    with col1:
-        st.image("images/photo_eraser.png", use_column_width=True)
-    # Column 2: Add the vertical divider using custom HTML and CSS
-    with col2:
-        st.markdown("""
-        <style>
-            .vertical-line {
-                border-left: 2px solid rgba(49, 51, 63, 0.2); /* Light gray vertical line */
-                height: 100vh; /* Full height of the viewport */
-                margin: 0 auto; /* Center the line vertically */
-            }
-        </style>
-        <div class="vertical-line"></div>
-        """, unsafe_allow_html=True) 
-    # Column 3: Add the configuration content
+    if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
+        if not st.session_state.timestamp:
+            # Create two columns with a 3:1 ratio and insert a vertical divider
 
-    with col3:
-        st.write("Configuration")
-       # K (Gain) slider with reset checkbox
-        st.session_state.k_value = st.slider("K (Gain)", min_value=-1.0, max_value=1.0, step=0.001, 
-                                             value=st.session_state.k_value, key='k_gain')
-        if st.checkbox("Reset K (Gain)"):
-            st.session_state.k_value = 0.0  # Reset to zero
-            
-        # T (Time constant) slider with reset checkbox
-        st.session_state.t_value = st.slider("T (Time constant)", min_value=0.0, max_value=100.0, step=0.1, 
-                                             value=st.session_state.t_value, key='t_constant')
-        if st.checkbox("Reset T (Time constant)"):
-            st.session_state.t_value = 0.0  # Reset to zero
+            if st.session_state.K is not None and st.session_state.tau is not None and st.session_state.theta is not None:
+                manual_K_value_default = st.session_state.K
+                manual_tau_value_default = st.session_state.tau
+                manual_theta_value_default = st.session_state.theta
 
-        # O (Dead time) slider with reset checkbox
-        st.session_state.o_value = st.slider("O (Dead time)", min_value=0.0, max_value=50.0, step=0.1, 
-                                             value=st.session_state.o_value, key='o_dead_time')
-        if st.checkbox("Reset O (Dead time)"):
-            st.session_state.o_value = 0.0  # Reset to zero
+                manual_K_value_upper_limit_default = st.session_state.k_slider_reset*100
+                manual_tau_value_upper_limit_default = st.session_state.t_slider_reset*100
+                manual_theta_value_upper_limit_default = (st.session_state.o_slider_reset*10 + 100)
 
-        # CSS to change the button background to blue
-        button_style = """
-            <style>
-            div.stButton > button {
-                background-color: blue;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-size: 16px;
-            }
-            </style>
-            """
-        # Inject the custom CSS into the Streamlit app
-        st.markdown(button_style, unsafe_allow_html=True)
-        if st.button("Save as optimal"):
-            st.success("Configuration saved successfully!")
+            else:
+                manual_K_value_default = st.session_state.k_value
+                manual_tau_value_default = st.session_state.t_value
+                manual_theta_value_default = st.session_state.o_value
+
+                manual_K_value_upper_limit_default = 100
+                manual_tau_value_upper_limit_default = 100
+                manual_theta_value_upper_limit_default = 100
+
+
+            # Assuming t, yp, and u are numpy arrays from session state
+            t = np.array(st.session_state.time_variable)
+            yp = np.array(st.session_state.output_variable)
+            u = np.array(st.session_state.input_variable)
+
+            # scale input from 0 to 1 
+            from sklearn.preprocessing import MinMaxScaler
+            scaler = MinMaxScaler()
+            u = scaler.fit_transform(u.reshape(-1,1)).flatten()
+
+            # Initialize u0, yp0, and ns
+            u0 = u[0]
+            yp0 = yp[0]
+
+            # specify number of steps
+            ns = len(t)
+            delta_t = t[1]-t[0]
+            # create linear interpolation of the u data versus time
+            uf = interp1d(t,u)
+        
+
+            # define first-order plus dead-time approximation    
+            def fopdt(y,t,uf,Km,taum,thetam):
+                # arguments
+                #  y      = output
+                #  t      = time
+                #  uf     = input linear function (for time shift)
+                #  Km     = model gain
+                #  taum   = model time constant
+                #  thetam = model time constant
+                # time-shift u
+                try:
+                    if (t-thetam) <= 0:
+                        um = uf(0.0)
+                    else:
+                        um = uf(t-thetam)
+                except:
+                    #print('Error with time extrapolation: ' + str(t))
+                    um = u0
+                # calculate derivative
+                dydt = (-(y-yp0) + Km * (um-u0))/taum
+                return dydt
+                
+            # simulate FOPDT model with x=[Km,taum,thetam]
+            def sim_model_manual(Km,taum,thetam):
+
+                ns = len(t)
+                # storage for model values
+                ym = np.zeros(ns)  # model
+                # initial condition
+                ym[0] = yp0
+                # loop through time steps    
+                for i in range(0,ns-1):
+                    ts = [t[i],t[i+1]]
+                    y1 = odeint(fopdt,ym[i],ts,args=(uf,Km,taum,thetam))
+                    ym[i+1] = y1[-1]
+                return ym
+
+            col1, col2, col3 = st.columns([1, 0.05, 3])  # The middle column for the vertical line is given a small width
+            # Column 1: Add content (like a plot)
+            with col1:
+                st.write("Configuration")
+
+                if st.session_state.K is None and st.session_state.tau is None and st.session_state.theta is None:
+
+                    st.session_state.k_value = st.slider("K (Gain)", min_value=0.0, max_value=float(manual_K_value_upper_limit_default), step=0.1, 
+                                                    value=float(st.session_state.k_value), key='k_gain')
+                    if st.checkbox("Reset K (Gain)"):
+                        st.session_state.k_value = 1.0  # Reset to default
+
+                    st.session_state.t_value = st.slider("T (Time constant)", min_value=0.0, max_value=float(manual_tau_value_upper_limit_default), step=0.1, 
+                                                    value=float(st.session_state.t_value), key='t_constant')
+                    if st.checkbox("Reset T (Time constant)"):
+                        st.session_state.t_value = 10.0
+
+                    st.session_state.o_value =  st.slider("O (Dead time)", min_value=0.0, max_value=float(manual_theta_value_upper_limit_default), step=0.1, 
+                                                    value=float(st.session_state.o_value), key='o_dead_time')
+                    if st.checkbox("Reset O (Dead time)"):
+                        st.session_state.o_value = 1.0                    
+
+                    ym_manual = sim_model_manual(st.session_state.k_value, st.session_state.t_value, st.session_state.o_value)
+                
+                else:
+                    st.session_state.K = st.slider("K (Gain)", min_value=0.0, max_value=float(manual_K_value_upper_limit_default), step=0.1, 
+                                                    value= float(st.session_state.K), key='k_gain')
+                    if st.checkbox("Reset K (Gain)"):
+                        st.session_state.K = st.session_state.k_slider_reset  # Reset to default
+
+                    st.session_state.tau = st.slider("T (Time constant)", min_value=0.0, max_value=float(manual_tau_value_upper_limit_default), step=0.1,
+                                                    value=float(st.session_state.tau), key='t_constant')
+                    if st.checkbox("Reset T (Time constant)"):
+                        st.session_state.tau = st.session_state.t_slider_reset
+
+                    st.session_state.theta =  st.slider("O (Dead time)", min_value=0.0, max_value=float(manual_theta_value_upper_limit_default), step=0.1, 
+                                                    value=float(st.session_state.theta), key='o_dead_time')
+                    if st.checkbox("Reset O (Dead time)"):
+                        st.session_state.theta = st.session_state.o_slider_reset
+
+                    ym_manual = sim_model_manual(st.session_state.K, st.session_state.tau, st.session_state.theta)
+                
+
+                # CSS to change the button background to blue
+                button_style = """
+                    <style>
+                    div.stButton > button {
+                        background-color: blue;
+                        color: white;
+                        border: none;
+                        padding: 10px 20px;
+                        border-radius: 5px;
+                        font-size: 16px;
+                    }
+                    </style>
+                    """
+                # Inject the custom CSS into the Streamlit app
+                st.markdown(button_style, unsafe_allow_html=True)
+                if st.button("Save as optimal"):
+                    st.success("Configuration saved successfully!")
+
+
+            # Column 2: Add the vertical divider using custom HTML and CSS
+            with col2:
+                st.markdown("""
+                <style>
+                    .vertical-line {
+                        border-left: 2px solid rgba(49, 51, 63, 0.2); /* Light gray vertical line */
+                        height: 100vh; /* Full height of the viewport */
+                        margin: 0 auto; /* Center the line vertically */
+                    }
+                </style>
+                <div class="vertical-line"></div>
+                """, unsafe_allow_html=True) 
+
+            with col3:
+                # Plot the actual output and fitted output using plotly
+                fig = go.Figure()
+                # Add traces
+                fig.add_trace(go.Scatter(x=t, y=ym_manual, mode='lines+markers', name='Model Prediction', 
+                                        line=dict(width=3, color='black', dash='dash'), 
+                                        marker=dict(size=1)))
+                fig.add_trace(go.Scatter(x=t, y=yp, mode='lines', name='Actual Output', 
+                                        line=dict(width=3, color='blue')))
+                # Update layout
+                fig.update_layout(
+                    xaxis_title='Time', 
+                    yaxis_title='Output', 
+                    plot_bgcolor='lightgray', 
+                    font=dict(size=16, family='Arial Black', color='black'), 
+                    height=400,  # Increase the height of the plot
+                    margin=dict(t=0, b=0, l=0, r=0),  # Adjust margins to control space around the plot
+                    xaxis=dict(
+                        tickfont=dict(size=14, family='Arial', color='black'),
+                        title_font=dict(size=16, family='Arial Black', color='black')
+                    ),
+                    yaxis=dict(
+                        tickfont=dict(size=14, family='Arial', color='black'),
+                        title_font=dict(size=16, family='Arial Black', color='black')
+                    ),
+                    legend=dict(
+                        x=0.75,  # Position the legend closer to the right edge (0 to 1 scale)
+                        y=0.1,   # Position the legend near the bottom of the plot (0 to 1 scale)
+                        bgcolor='rgba(255,255,255,0.5)',  # Transparent background for the legend
+                        bordercolor='black',
+                        borderwidth=1
+                    )
+                )
+                # Render plotly chart in Streamlit
+                st.plotly_chart(fig, use_container_width=True)
+             
+        else:
+            st.warning("You need to convert the timestamp to minutes before fitting the model!")
 
 with tab5:
     st.write("Codes for D-S")
