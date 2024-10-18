@@ -9,7 +9,6 @@ from scipy.optimize import minimize
 from scipy.integrate import odeint
 from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
-from gekko import GEKKO
 
 st.set_page_config(layout="wide",
                page_title="GeauxTune",
