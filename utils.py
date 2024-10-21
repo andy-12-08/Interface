@@ -197,7 +197,7 @@ def rescale_output():
     if st.session_state.scale_output:
         st.session_state.output_variable = 100*((st.session_state.output_variable - st.session_state.output_min)/(st.session_state.output_max - st.session_state.output_min))
  
-def generate_model_plot(t,yp,ym,r2,rmse):
+def generate_model_plot(t,yp,ym,r2,rmse, key=None):
     """Generate and return Plotly figure comparing model and actual output."""
     # Plot the actual output and fitted output using plotly
     fig = go.Figure()
@@ -239,7 +239,7 @@ def generate_model_plot(t,yp,ym,r2,rmse):
         )
     )
     # Render plotly chart in Streamlit
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=key)
 
 def foptd_optimization(t,yp,u):
     """Simulate First-Order Plus Dead-Time (FOPDT) Model"""

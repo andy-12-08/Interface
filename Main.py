@@ -255,7 +255,7 @@ with tab3:
 
                 col1, col2, col3 = st.columns([3, 0.05, 1])
                 with col1:
-                    generate_model_plot(t,yp,ym,r2,rmse)
+                    generate_model_plot(t,yp,ym,r2,rmse, key='model_plot')
                 with col2:
                     add_vertical_divider()
                 with col3:
@@ -402,7 +402,7 @@ with tab4:
             with col2:
                 add_vertical_divider()
             with col3:
-                generate_model_plot(t,yp,ym_manual,r2_manual,rmse_manual)   
+                generate_model_plot(t,yp,ym_manual,r2_manual,rmse_manual, key='manual_model_plot')   
         else:
             st.warning("You need to convert the timestamp to minutes before fitting the model!")
 with tab5:
