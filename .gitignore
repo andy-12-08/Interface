@@ -1,2 +1,4 @@
 molAI_demo.pem
 test.ipynb
+__pycache__/
+test.py
