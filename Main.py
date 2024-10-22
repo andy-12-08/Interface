@@ -231,6 +231,8 @@ with tab3:
                 u = np.array(st.session_state.input_variable)
                 # Fit optimized FOTPD model to the data
                 x = foptd_optimization(t, yp, u)
+                if x[2] < 0:
+                    x[2] = 0
                 # Display the optimized parameters
                 K = x[0]
                 tau = x[1] 
