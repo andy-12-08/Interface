@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from scipy.optimize import minimize
 from scipy.integrate import odeint
 from scipy.interpolate import interp1d
+import control as ctrl # Python Control Systems Library
 
 def add_medium_vertical_space():
     # Add vertical space between widgets
@@ -362,3 +363,171 @@ def add_vertical_divider():
     </style>
     <div class="vertical-line"></div>
     """, unsafe_allow_html=True)
+
+def response_plot(time, response,annotation_text,plot_title):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=time, y=response, mode='lines', name='Response',
+                                line=dict(width=3, color='blue')))
+    fig.add_annotation(
+                    text=annotation_text,
+                    xref="paper", yref="paper", x=0.95, y=0.05, showarrow=False,
+                    font=dict(size=14, family="Arial", color="black"),
+                    bordercolor="black", borderwidth=1, borderpad=4, bgcolor="lightgray", opacity=0.8
+                    )
+    fig.update_layout(title=plot_title,
+                        xaxis_title='Time (min)',
+                        yaxis_title='Response',
+                        template='plotly_dark',
+                        plot_bgcolor='lightgray', 
+                        font=dict(size=16, family='Arial Black', color='black'), 
+                        height=400,  # Increase the height of the plot
+                        margin=dict(t=30, b=0, l=0, r=0),  # Adjust margins to control space around the plot
+                        xaxis=dict(
+                            tickfont=dict(size=14, family='Arial', color='black'),
+                            title_font=dict(size=16, family='Arial Black', color='black')
+                        ),
+                        yaxis=dict(
+                            tickfont=dict(size=14, family='Arial', color='black'),
+                            title_font=dict(size=16, family='Arial Black', color='black')
+                        ),
+                        )
+    st.plotly_chart(fig, use_container_width=True)
+
+def calculate_pi_controller_with_delay(K_p, tau_p, theta, tau_c):
+    """Calculate PI controller parameters using the Direct Synthesis method with delay."""
+
+    # print("K_p:", K_p, "tau_p:", tau_p, "theta:", theta, "tau_c:", tau_c)
+    if theta == 0:
+        # If dead time (theta) is zero, simplify the PI controller calculation
+        # print(tau_p / (K_p * tau_c))
+        Kc_pi = tau_p / (K_p * tau_c)  # Exclude theta from calculation
+    else:
+        # Normal case where theta is non-zero
+        Kc_pi = tau_p / (K_p * (tau_c + theta))  # Original calculation
+
+    Ti_pi = tau_p  # Integral time constant
+    return Kc_pi, Ti_pi
+
+def simulate_closed_loop(K_p, tau_p, theta, K_c, T_i,t, t_max):
+    """Simulate the closed-loop response for a PI controller using a FOPDT model."""
+    G_p_delay = ctrl.pade(theta, 1)  # 1st order Padé approximation of the delay
+    delay_tf = ctrl.TransferFunction(G_p_delay[0], G_p_delay[1])
+    G_p = ctrl.TransferFunction([K_p], [tau_p, 1]) * delay_tf
+    G_c = ctrl.TransferFunction([K_c * T_i, K_c], [T_i, 0])
+    G_open = G_c * G_p
+    G_cl = ctrl.feedback(G_open, 1)
+    time = np.linspace(np.min(t), t_max, len(t))
+    time, response = ctrl.step_response(G_cl, time)
+    return time, response
+
+def simulate_p_control(Kp, tau, theta, Kc,t,t_max):
+    """Simulate the closed-loop response for proportional (P) control."""
+    G_p_delay = ctrl.pade(theta, 1)  # Pade approximation for delay
+    delay_tf = ctrl.TransferFunction(G_p_delay[0], G_p_delay[1])
+    G_p = ctrl.TransferFunction([Kp], [tau, 1]) * delay_tf
+    G_c = ctrl.TransferFunction([Kc], [1])  # Proportional control
+    G_open = G_c * G_p
+    G_cl = ctrl.feedback(G_open, 1)
+    time = np.linspace(np.min(t), t_max, len(t))
+    time, response = ctrl.step_response(G_cl, time)
+    return time, response
+
+def calculate_zn_pi_parameters(Ku_slider, pu_entry):
+    """Calculate PI parameters using the Ziegler-Nichols method based on Ku and Pu."""
+    Ku = float(Ku_slider)  # Automatically use the value from the slider as Ku
+    Pu = float(pu_entry)  # Get Pu from the text box
+
+    # Calculate Ziegler-Nichols PI parameters
+    Kc = 0.45 * Ku
+    Ti = 0.83 * Pu
+
+    kc_ZN = Kc
+    ti_ZN = Ti
+
+    return kc_ZN, ti_ZN
+
+def calculate_cohen_coon(k_opt,tau_opt,theta_opt):
+    """Calculate Cohen-Coon PI tuning parameters based on the FOPDT model."""
+    K = k_opt  # Process Gain
+    tau = tau_opt  # Time Constant
+    theta = theta_opt  # Dead Time
+
+    if K == 0 or tau == 0:
+        message = st.error("Error", "Process parameters cannot be zero.")
+        return  message
+    
+    if theta == 0:
+        theta = 0.1
+        st.warning("Proces has zero deadtime, using td of 0.1")
+
+    # if theta == 0:
+    #     theta == 0.1
+    #     print("Proces has zero deadtime, using td of 0.1")
+
+    # Cohen-Coon PI formula
+    # Kc = (1 / K) * ((theta / tau) + 0.35) / (1 + 0.19 * (theta / tau))
+    # Ti = tau * (1 / (1 + 0.35 * (theta / tau)))
+    Kc = (1 / K) * (tau / theta) * (0.9 + (theta / (12 * tau)))
+    Ti = theta * (30 + 3 * (theta / tau)) / (9 + 20 * (theta / tau))
+
+    kc_CC = Kc
+    ti_CC = Ti
+
+    return kc_CC, ti_CC
+
+def simulate_closed_loop_all(k_opt,tau_opt,theta_opt,lambda_val,kc_DS,ti_DS,kc_ZN,ti_ZN,kc_CC,ti_CC,t,t_max):
+    """Simulate and plot the closed-loop responses for Direct Synthesis, Ziegler-Nichols, and Cohen-Coon controllers."""
+    # Get the time range from the loaded data
+    t_min = np.min(t)
+    time = np.linspace(t_min, t_max, len(t))        
+    # Create transfer functions for the process
+    G_p_delay = ctrl.pade(theta_opt, 1)  # 1st order Padé approximation of the delay
+    delay_tf = ctrl.TransferFunction(G_p_delay[0], G_p_delay[1])
+    G_p = ctrl.TransferFunction([k_opt], [tau_opt, 1]) * delay_tf
+
+    # Simulate for Direct Synthesis (DS)
+    tau_c_DS = lambda_val  # Use lambda from the slider as tau_c for DS
+    G_c_DS = ctrl.TransferFunction([kc_DS * ti_DS, kc_DS], [ti_DS, 0])
+    G_open_DS = G_c_DS * G_p
+    G_cl_DS = ctrl.feedback(G_open_DS, 1)
+    time_DS, response_DS = ctrl.step_response(G_cl_DS, time)
+
+    # Simulate for Ziegler-Nichols (ZN)
+    G_c_ZN = ctrl.TransferFunction([kc_ZN * ti_ZN, kc_ZN], [ti_ZN, 0])
+    G_open_ZN = G_c_ZN * G_p
+    G_cl_ZN = ctrl.feedback(G_open_ZN, 1)
+    time_ZN, response_ZN = ctrl.step_response(G_cl_ZN, time)
+
+    # Simulate for Cohen-Coon (CC)
+    G_c_CC = ctrl.TransferFunction([kc_CC * ti_CC, kc_CC], [ti_CC, 0])
+    G_open_CC = G_c_CC * G_p
+    G_cl_CC = ctrl.feedback(G_open_CC, 1)
+    time_CC, response_CC = ctrl.step_response(G_cl_CC, time)
+
+    return time_DS, response_DS, time_ZN, response_ZN, time_CC, response_CC
+
+def plot_closed_loop_response_all(time_DS, response_DS, time_ZN, response_ZN, time_CC, response_CC):
+    # Plot the closed loop response for all controllers in a single plot
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=time_DS, y=response_DS, mode='lines', name='Direct Synthesis', line=dict(color='blue', width=2)))
+    fig.add_trace(go.Scatter(x=time_ZN, y=response_ZN, mode='lines', name='Ziegler-Nichols', line=dict(color='green', width=2)))
+    fig.add_trace(go.Scatter(x=time_CC, y=response_CC, mode='lines', name = 'Cohen-Coon', line=dict(color='red', width=2)))
+
+    fig.update_layout(title='Close Loop Response Comparison',
+    xaxis_title='Time (min)',
+    yaxis_title='Response',
+    template='plotly_dark',
+    plot_bgcolor='lightgray', 
+    font=dict(size=16, family='Arial Black', color='black'), 
+    height=400,  # Increase the height of the plot
+    margin=dict(t=30, b=0, l=0, r=0),  # Adjust margins to control space around the plot
+    xaxis=dict(
+        tickfont=dict(size=14, family='Arial', color='black'),
+        title_font=dict(size=16, family='Arial Black', color='black')
+    ),
+    yaxis=dict(
+        tickfont=dict(size=14, family='Arial', color='black'),
+        title_font=dict(size=16, family='Arial Black', color='black')
+    ),
+    )
+    st.plotly_chart(fig, use_container_width=True)

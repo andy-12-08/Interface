@@ -2,11 +2,16 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+
 # import external functions from utils.py
 from utils import add_medium_vertical_space, add_large_vertical_space, convert_time_to_timestamp
 from utils import add_vertical_divider, prepare_time_column, rescale_input, rescale_output
 from utils import I_O_Plot, foptd_optimization, sim_foptd_model, generate_model_plot
-from utils import convert_timestamp_to_minutes
+from utils import convert_timestamp_to_minutes, response_plot, plot_closed_loop_response_all
+from utils import calculate_pi_controller_with_delay, simulate_closed_loop, simulate_p_control
+from utils import calculate_cohen_coon, calculate_zn_pi_parameters, simulate_closed_loop_all
+from session_state_init import initialize_session_state
+
 # Set the page configuration
 st.set_page_config(layout="wide",
                page_title="GeauxTune",
@@ -19,59 +24,10 @@ html_title = """
 """
 st.markdown(html_title, unsafe_allow_html=True)
 
-## Initialize the necessary session state variables
-if 'fit_model_status' not in st.session_state:
-    st.session_state.fit_model_status = "Model fitting in progress!"
-# Initialize session state for file upload status if not already set
-if 'uploaded_file' not in st.session_state:
-    st.session_state.uploaded_file = None
-# Initialize session state for columns if not already set
-if 'time_column' not in st.session_state:
-    st.session_state.time_column = None
-if 'input_column' not in st.session_state:
-    st.session_state.input_column = None
-if 'output_column' not in st.session_state:
-    st.session_state.output_column = None
-# Initialize session state for the input, output and time variables if not already set
-if 'output_variable' not in st.session_state:
-    st.session_state.output_variable = None
-if 'input_variable' not in st.session_state:
-    st.session_state.input_variable = None
-if 'time_variable' not in st.session_state:
-    st.session_state.time_variable = None
-# Initialize session state for the scaling variables if not already set
-if 'min_input' not in st.session_state:
-    st.session_state.min_input = None
-if 'max_input' not in st.session_state:
-    st.session_state.max_input = None
-if 'min_output' not in st.session_state:
-    st.session_state.min_output = None
-if 'max_output' not in st.session_state:
-    st.session_state.max_output = None
-# initialize the checkbox state for scaling the input and output variables
-if 'scale_input' not in st.session_state:
-    st.session_state.scale_input = False
-if 'scale_output' not in st.session_state:
-    st.session_state.scale_output = False
-# Initialize session state for the optimized parameters if not already set
-if 'K' not in st.session_state:
-    st.session_state.K = None
-if 'tau' not in st.session_state:
-    st.session_state.tau = None
-if 'theta' not in st.session_state:
-    st.session_state.theta = None
-# Initialize session state for sliders if not already set
-if 'k_value' not in st.session_state:
-    st.session_state.k_value = 1  # Default value for K Gain before optimization
-if 't_value' not in st.session_state:
-    st.session_state.t_value = 10  # Default value for Time constant before optimization
-if 'o_value' not in st.session_state:
-    st.session_state.o_value = 1  # Default value for Dead time before optimization
-# Initialize session state for the model fitting status
-if 'fit_model' not in st.session_state:
-    st.session_state.fit_model = False
+# initialize the session state variables
+initialize_session_state()
 
-
+# Create the tabs
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = \
     st.tabs(["Data Source","Input/Output","Model fitting","Manual fit","D-S","Z-N","C-C","Compare","Export results"])
 
@@ -221,7 +177,7 @@ with tab2:
 
 with tab3:
     if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
-        if st.session_state.fit_model == True:
+        if st.session_state.fit_model == True: # and st.session_state.K is None and st.session_state.tau is None and st.session_state.theta is None:
             if not st.session_state.timestamp:
                 # st.success("Model fitting in progress!")
                 st.warning(st.session_state.fit_model_status)
@@ -398,7 +354,16 @@ with tab4:
                 # Inject the custom CSS into the Streamlit app
                 st.markdown(button_style, unsafe_allow_html=True)
                 if st.button("Save as optimal"):
+                    st.session_state.K_optimal = st.session_state.k_value
+                    st.session_state.tau_optimal = st.session_state.t_value
+                    st.session_state.theta_optimal = st.session_state.o_value
+                    st.session_state.save_optimal = True
                     st.success("Configuration saved successfully!")
+                # Set default values only if optimal values are not already saved
+                if not st.session_state.save_optimal:
+                    st.session_state.K_optimal = st.session_state.K
+                    st.session_state.tau_optimal = st.session_state.tau
+                    st.session_state.theta_optimal = st.session_state.theta
 
             # Column 2: Add the vertical divider using custom HTML and CSS
             with col2:
@@ -408,12 +373,167 @@ with tab4:
         else:
             st.warning("You need to convert the timestamp to minutes before fitting the model!")
 with tab5:
-    st.write("Codes for D-S")
+    if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
+        if not st.session_state.timestamp and st.session_state.K is not None and st.session_state.tau is not None and st.session_state.theta is not None:
+            col1, col2, col3 = st.columns([1.1, 0.05, 2])
+            t = np.array(st.session_state.time_variable)
+            with col1:
+                # Create HTML for the parameters
+                K_optimal_html = f"<span style='color:blue; font-size:15px; font-weight:bold;'>Kp (Process Gain): </span> <span style='font-size:15px;'>{st.session_state.K_optimal:.2f}</span>"
+                tau_optimal_html = f"<span style='color:red; font-size:15px; font-weight:bold;'>τ (Time Constant): </span> <span style='font-size:15px;'>{st.session_state.tau_optimal:.2f}</span>"
+                theta_optimal_html = f"<span style='color:green; font-size:15px; font-weight:bold;'>θ (Dead Time): </span> <span style='font-size:15px;'>{st.session_state.theta_optimal:.2f}</span>"
+                # Combine with a header
+                st.markdown(f"""
+                <div style='background-color:lightgray; padding:10px; border-radius:10px; max-width:400px; margin:auto;'>
+                    <h5 style='font-weight:bold; color:black;margin-bottom:-10px'>Process Model Parameters</h5>
+                    <div>{K_optimal_html}</div>
+                    <div>{tau_optimal_html}</div>
+                    <div>{theta_optimal_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                add_medium_vertical_space()
+                lambda_value_default = max(st.session_state.theta_optimal, 1.0)
+                # Lambda slider for closed-loop time constant
+                st.session_state.lambda_value = st.slider(
+                    "λ (Desired Closed-Loop Time Constant):", 
+                    min_value=0.1, max_value=10.0, step=0.1,
+                    value=lambda_value_default,
+                )
+                # Calculate PI controller parameters using Direct Synthesis method
+                st.session_state.Kc_DS, st.session_state.Ti_DS = calculate_pi_controller_with_delay(st.session_state.K_optimal, st.session_state.tau_optimal, st.session_state.theta_optimal, st.session_state.lambda_value)
+                Kc_DS_html = f"<span style='color:blue; font-size:15px; font-weight:bold;'>Kc (Controller Gain): </span> <span style='font-size:15px;'>{st.session_state.Kc_DS:.2f}</span>"
+                Ti_DS_html = f"<span style='color:red; font-size:15px; font-weight:bold;'>Ti (Integral Time): = </span> <span style='font-size:15px;'>{st.session_state.Ti_DS:.2f}</span>"
+                st.markdown(f"""
+                <div style='background-color:lightgray; padding:10px; border-radius:10px; max-width:400px; margin:auto;'>
+                    <h5 style='font-weight:bold; color:black;margin-top:0px;margin-bottom:-30px'>PI Controller Parameters (Direct Synthesis)</h5>
+                    <div>{Kc_DS_html}</div>
+                    <div>{Ti_DS_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                add_medium_vertical_space()
+                sim_time_ds = st.number_input("Simulation Time (min)", value=float(max(t)), key='sim_time_ds')
+            with col2:
+                add_vertical_divider()
+            with col3:
+                time, response = simulate_closed_loop(st.session_state.K_optimal, st.session_state.tau_optimal, st.session_state.theta_optimal, st.session_state.Kc_DS, st.session_state.Ti_DS,t,sim_time_ds)
+                annotation_text = f"λ = {st.session_state.lambda_value:.2f}"
+                plot_title = 'Closed-Loop Response'
+                response_plot(time, response, annotation_text, plot_title)
+                       
 with tab6:
-    st.write("Codes for Z-N")
+    if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
+        if not st.session_state.timestamp and st.session_state.K is not None and st.session_state.tau is not None and st.session_state.theta is not None:
+            col1, col2, col3 = st.columns([1.5, 0.05, 3])
+            t = np.array(st.session_state.time_variable)
+            with col1:
+                col1a, col1b = st.columns([0.5, 1])
+                with col1a:
+                    with st.expander('Bounds'):
+                        lower_ku_bound = st.number_input("Low", value=0.01, step=0.01, key='lower_ku_bound')
+                        upper_ku_bound = st.number_input("High", value=100.0, step=0.01, key='upper_ku_bound')
+                with col1b:
+                    if st.session_state.K_optimal >= 0:
+                        Ku_slider_zn = st.slider("Ku (Ultimate Gain)", min_value=lower_ku_bound, max_value=upper_ku_bound, step=0.1, key='Ku')
+                    else:
+                        Ku_slider_zn = st.slider("Ku (Ultimate Gain)", min_value=-100.0, max_value=-0.01, step=0.1, key='Ku')
+                    Ku_ZN_html = f"<span style='color:blue; font-size:15px; font-weight:bold;'>Ku (Ultimate Gain): </span> <span style='font-size:15px;'>{Ku_slider_zn:.2f}</span>"       
+                # Number input for Pu
+                Pu_value = st.number_input("Pu (Ultimate Period)", min_value=0.01, step=0.01, key="Pu")
+                Pu_ZN_html = f"<span style='color:red; font-size:15px; font-weight:bold;'>Pu (Ultimate Period): </span> <span style='font-size:15px;'>{Pu_value:.2f}</span>"
+                st.markdown(f"""
+                <div style='background-color:lightgray; padding:10px; border-radius:10px; max-width:400px; margin:auto;'>
+                    <div>{Ku_ZN_html}</div>
+                    <div>{Pu_ZN_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                sim_time_zn = st.number_input("Simulation Time (min)", value=float(max(t)), key='sim_time_zn')
+                if st.button("Calculate PI parameters", key='calculate_pi_parameters_zn'):
+                    # Calculate PI parameters using Ziegler-Nichols method
+                    st.session_state.Kc_zn, st.session_state.Ti_zn = calculate_zn_pi_parameters(Ku_slider_zn, Pu_value)
+                    Kc_zn_html = f"<span style='color:blue; font-size:15px; font-weight:bold;'>Kc (Calculated): </span> <span style='font-size:15px;'>{st.session_state.Kc_zn:.2f}</span>"
+                    Ti_zn_html = f"<span style='color:red; font-size:15px; font-weight:bold;'>Ti (Calculated): </span> <span style='font-size:15px;'>{st.session_state.Ti_zn:.2f}</span>"
+                    st.markdown(f"""
+                    <div style='background-color:lightgray; padding:10px; border-radius:10px; max-width:400px; margin:auto;'>
+                        <div>{Kc_zn_html}</div>
+                        <div>{Ti_zn_html}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            with col2:
+                add_vertical_divider()
+            with col3:
+                time, response =  simulate_p_control(st.session_state.K_optimal, st.session_state.tau_optimal, st.session_state.theta_optimal, Ku_slider_zn,t,sim_time_zn)
+                annotation_text = f"Ku = {Ku_slider_zn:.2f}"
+                plot_title = 'Closed-Loop Response in P-Contol'
+                response_plot(time, response, annotation_text, plot_title)
+
 with tab7:
-    st.write("Codes for C-C")
+    if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
+        if not st.session_state.timestamp and st.session_state.K is not None and st.session_state.tau is not None and st.session_state.theta is not None:
+            # Create HTML for the parameters
+            K_optimal_html = f"<span style='color:blue; font-size:15px; font-weight:bold;'>Kp (Process Gain): </span> <span style='font-size:15px;'>{st.session_state.K_optimal:.2f}</span>"
+            tau_optimal_html = f"<span style='color:red; font-size:15px; font-weight:bold;'>τ (Time Constant): </span> <span style='font-size:15px;'>{st.session_state.tau_optimal:.2f}</span>"
+            theta_optimal_html = f"<span style='color:green; font-size:15px; font-weight:bold;'>θ (Dead Time): </span> <span style='font-size:15px;'>{st.session_state.theta_optimal:.2f}</span>"
+            # Combine with a header
+            st.markdown(f"""
+            <div style='background-color:lightgray; padding:10px; border-radius:10px; max-width:400px; margin:auto;'>
+                <h5 style='font-weight:bold; color:black;margin-bottom:-10px'>Process Model Parameters</h5>
+                <div>{K_optimal_html}</div>
+                <div>{tau_optimal_html}</div>
+                <div>{theta_optimal_html}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            add_medium_vertical_space()
+            # Centered Streamlit button
+            col1, col2, col3 = st.columns([1.5, 1.5, 1.5])  # Create three columns to center the button
+            with col2:   
+                if st.button("Calculate Cohen-Coon PI parameters"):
+                    # Calculate PI controller parameters using Cohen-Coon method
+                    st.session_state.Kc_cc, st.session_state.Ti_cc =  calculate_cohen_coon(st.session_state.K_optimal,st.session_state.tau_optimal, st.session_state.theta_optimal)
+                    st.success("Cohen-Coon PI parameters calculated successfully!") 
+            if st.session_state.Kc_cc is not None and st.session_state.Ti_cc is not None:
+                Kc_cc_html = f"<span style='color:blue; font-size:15px; font-weight:bold;'>Kc (Proportional Gain): </span> <span style='font-size:15px;'>{st.session_state.Kc_cc:.2f}</span>"
+                Ti_cc_html = f"<span style='color:red; font-size:15px; font-weight:bold;'>Ti (Integral Gain): </span> <span style='font-size:15px;'>{st.session_state.Ti_cc:.2f}</span>"
+                st.markdown(f"""
+                <div style='background-color:lightgray; padding:10px; border-radius:10px; max-width:400px; margin:auto;'>
+                    <h5 style='font-weight:bold; color:black;margin-bottom:-10px'> Cohen-Coon PI Parameters</h5>
+                    <div>{Kc_cc_html}</div>
+                    <div>{Ti_cc_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                Kc_cc_html = f"<span style='color:blue; font-size:15px; font-weight:bold;'>Kc (Proportional Gain): </span> <span style='font-size:15px;'>{st.session_state.Kc_cc}</span>"
+                Ti_cc_html = f"<span style='color:red; font-size:15px; font-weight:bold;'>Ti (Integral Gain): </span> <span style='font-size:15px;'>{st.session_state.Ti_cc}</span>"
+                st.markdown(f"""
+                <div style='background-color:lightgray; padding:10px; border-radius:10px; max-width:400px; margin:auto;'>
+                    <h5 style='font-weight:bold; color:black;margin-bottom:-10px'> Cohen-Coon PI Parameters</h5>
+                    <div>{Kc_cc_html}</div>
+                    <div>{Ti_cc_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
 with tab8:
-    st.write("Codes for Compare")
+    if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
+        if not st.session_state.timestamp and st.session_state.K is not None and st.session_state.tau is not None and st.session_state.theta is not None:
+            if st.session_state.Kc_cc is not None and st.session_state.Ti_cc is not None and st.session_state.Kc_zn is not None and st.session_state.Ti_zn is not None and st.session_state.Kc_DS is not None and st.session_state.Ti_DS is not None:
+                t = np.array(st.session_state.time_variable)
+                st.markdown("#### Closed Loop Response for All Controllers ####")
+                col1, col2, col3 = st.columns([1.5, 0.05, 3])
+                with col1:
+                    sim_time_all = st.number_input("Simulation Time (min)", value=float(max(t)), key='sim_time_all')
+                    if st.button("Compare Controllers", key='compare_controllers'):
+                        # simulate the closed loop response for all controllers using simulate_close_loop_all function
+                        time_DS, response_DS, time_ZN, response_ZN, time_CC, response_CC = simulate_closed_loop_all(st.session_state.K_optimal, st.session_state.tau_optimal, st.session_state.theta_optimal, 
+                                                                                                                    st.session_state.lambda_value, st.session_state.Kc_DS, st.session_state.Ti_DS, 
+                                                                                                                    st.session_state.Kc_zn, st.session_state.Ti_zn, 
+                                                                                                                    st.session_state.Kc_cc, st.session_state.Ti_cc, 
+                                                                                                                    t, sim_time_all)
+                with col2:
+                    add_vertical_divider()
+                with col3:
+                        if st.session_state.compare_controllers:
+                            # Plot the closed loop response for all controllers
+                            plot_closed_loop_response_all(time_DS, response_DS, time_ZN, response_ZN, time_CC, response_CC)
+            else: 
+                st.error("Please calculate controller parameters first in their respective tabs.")
+
 with tab9:
     st.write("Codes for Exporting results")
