@@ -37,7 +37,7 @@ with tab1:
     # Create two columns and insert a vertical divider
     col1, col2, col3 = st.columns([0.8, 0.05, 2])  # The middle column for the vertical line is given a small width
     with col1:
-        st.image("images/icon4.png", use_column_width=True)
+        st.image("images/icon4.png", use_container_width=True)
         label_html = """
         <span style="color:gold; font-size:20px; font-weight:bold;">Upload your data file</span>
         """
