@@ -2,6 +2,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
+import io
 
 # import external functions from utils.py
 from utils import add_medium_vertical_space, add_large_vertical_space, convert_time_to_timestamp
@@ -35,7 +37,7 @@ with tab1:
     # Create two columns and insert a vertical divider
     col1, col2, col3 = st.columns([0.8, 0.05, 2])  # The middle column for the vertical line is given a small width
     with col1:
-        st.image("images/icon4.png",use_container_width=True)
+        st.image("images/icon4.png", use_column_width=True)
         label_html = """
         <span style="color:gold; font-size:20px; font-weight:bold;">Upload your data file</span>
         """
@@ -349,6 +351,18 @@ with tab4:
                         border-radius: 5px;
                         font-size: 16px;
                     }
+                    div.stDownloadButton > button {
+                        background-color: blue;
+                        color: white;
+                        border: none;
+                        padding: 10px 20px;
+                        border-radius: 5px;
+                        font-size: 16px;
+                        cursor: pointer;
+                    }
+                    div.stDownloadButton > button:hover {
+                        background-color: darkblue;
+                    }
                     </style>
                     """
                 # Inject the custom CSS into the Streamlit app
@@ -536,4 +550,37 @@ with tab8:
                 st.error("Please calculate controller parameters first in their respective tabs.")
 
 with tab9:
-    st.write("Codes for Exporting results")
+    # save model and controller parameters to an excel file with tabname as 'Model and Controller Parameters'
+    if st.session_state.uploaded_file is not None and st.session_state.time_column is not None and st.session_state.input_column is not None and st.session_state.output_column is not None:
+        if not st.session_state.timestamp and st.session_state.K is not None and st.session_state.tau is not None and st.session_state.theta is not None:
+            if st.session_state.Kc_cc is not None and st.session_state.Ti_cc is not None and st.session_state.Kc_zn is not None and st.session_state.Ti_zn is not None and st.session_state.Kc_DS is not None and st.session_state.Ti_DS is not None:
+                if st.session_state.K_optimal is not None and st.session_state.tau_optimal is not None and st.session_state.theta_optimal is not None:
+                    param_dict = {'K(Gain)': st.session_state.K_optimal,
+                                'τ(Time Constant)': st.session_state.tau_optimal,
+                                'θ(Dead Time)': st.session_state.theta_optimal,
+                                'Kc(DS)': st.session_state.Kc_DS,
+                                'Ti(DS)': st.session_state.Ti_DS,
+                                'Kc(ZN)': st.session_state.Kc_zn,
+                                'Ti(ZN)': st.session_state.Ti_zn,
+                                'Kc(CC)': st.session_state.Kc_cc,
+                                'Ti(CC)': st.session_state.Ti_cc
+                                }
+                    # convert to dataframe with headers: "Parameter" and "Value"
+                    df = pd.DataFrame(param_dict.items(), columns=['Parameter', 'Value'])
+                    def generate_excel_download(df, tabname):
+                        # Use BytesIO to create a binary stream
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            df.to_excel(writer, sheet_name=tabname, index=False)
+                        # Save the file to the BytesIO object
+                        output.seek(0)  # Move to the start of the stream
+                        return output
+                    # Generate the Excel file
+                    excel_file = generate_excel_download(df, 'Model and Controller Parameters')
+                    # Add a download button to Streamlit
+                    st.download_button(
+                        label="Download Model and Controller Parameters",
+                        data=excel_file,
+                        file_name="Model_and_Controller_Parameters.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
